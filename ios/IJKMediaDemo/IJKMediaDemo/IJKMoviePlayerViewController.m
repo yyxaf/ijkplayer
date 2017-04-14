@@ -20,6 +20,10 @@
 #import "IJKCommon.h"
 #import "IJKDemoHistory.h"
 
+@interface IJKVideoViewController()
+@property (nonatomic, retain) NSTimer *timer;
+@end
+
 @implementation IJKVideoViewController
 
 - (void)dealloc
@@ -73,7 +77,29 @@
     [IJKFFMoviePlayerController checkIfFFmpegVersionMatch:YES];
     // [IJKFFMoviePlayerController checkIfPlayerVersionMatch:YES major:1 minor:0 micro:0];
 
+    BOOL _isLive = false;
+    
     IJKFFOptions *options = [IJKFFOptions optionsByDefault];
+    [options setFormatOptionValue:@"tcp" forKey:@"rtsp_transport"];
+    // Set param
+    [options setFormatOptionIntValue:1024 * 2 forKey:@"probsize"];
+    [options setFormatOptionIntValue:2000 forKey:@"analyzeduration"];
+    [options setPlayerOptionIntValue:1 forKey:@"videotoolbox"];
+    [options setCodecOptionIntValue:IJK_AVDISCARD_DEFAULT forKey:@"skip_loop_filter"];
+    [options setCodecOptionIntValue:IJK_AVDISCARD_DEFAULT forKey:@"skip_frame"];
+    if (_isLive) {
+        // Param for living
+        [options setPlayerOptionIntValue:1000 forKey:@"max_cached_duration"];   // 最大缓存大小是3秒，可以依据自己的需求修改
+        [options setPlayerOptionIntValue:1 forKey:@"infbuf"];  // 无限读
+        [options setPlayerOptionIntValue:0 forKey:@"packet-buffering"];  //  关闭播放器缓冲
+    } else {
+        // Param for playback
+        [options setPlayerOptionIntValue:0 forKey:@"max_cached_duration"];
+        [options setPlayerOptionIntValue:0 forKey:@"infbuf"];
+        [options setPlayerOptionIntValue:1 forKey:@"packet-buffering"];
+    }
+    
+
 
     self.player = [[IJKFFMoviePlayerController alloc] initWithContentURL:self.url withOptions:options];
     self.player.view.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
@@ -86,6 +112,16 @@
     [self.view addSubview:self.mediaControl];
 
     self.mediaControl.delegatePlayer = self.player;
+    
+    if (!self.timer) {
+        self.timer = [NSTimer scheduledTimerWithTimeInterval:3.0f target:self selector:@selector(timerHandle) userInfo:nil repeats:YES];
+    }
+}
+
+- (void)timerHandle {
+    NSLog(@"IJKPlayer isPlaying:%d",[self.player isPlaying]);
+
+    NSLog(@"IJKPlayer videotoolbox:%d",[((IJKFFMoviePlayerController*)self.player) isVideoToolboxOpen]);
 }
 
 - (void)viewWillAppear:(BOOL)animated {
