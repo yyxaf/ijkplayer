@@ -70,9 +70,6 @@
 #include "ijkmeta.h"
 #include "ijkversion.h"
 #include <stdatomic.h>
-#if defined(__ANDROID__)
-#include "ijksoundtouch/ijksoundtouch_wrap.h"
-#endif
 
 #ifndef AV_CODEC_FLAG2_FAST
 #define AV_CODEC_FLAG2_FAST CODEC_FLAG2_FAST
@@ -131,6 +128,122 @@ int64_t get_valid_channel_layout(int64_t channel_layout, int channels)
         return channel_layout;
     else
         return 0;
+}
+#endif
+
+
+#ifdef YYXAF_ADD_1
+static void drop_queue_until_pts(PacketQueue *q, int64_t drop_to_pts) {
+    MyAVPacketList *pkt1 = NULL;
+    int del_nb_packets = 0;
+    for (;;) {
+        pkt1 = q->first_pkt;
+        if (!pkt1) {
+            break;
+        }
+        // video need key frame? 这里如果不判断是否是关键帧会导致视频画面花屏。但是这样会导致全部清空的可能也会出现花屏
+        // 所以这里推流端设置好 GOP 的大小，如果 max_cached_duration > 2 * GOP，可以尽可能规避全部清空
+        // 也可以在调用control_queue_duration之前判断新进来的视频pkt是否是关键帧，这样即使全部清空了也不会花屏
+        if ((pkt1->pkt.flags & AV_PKT_FLAG_KEY) && pkt1->pkt.pts >= drop_to_pts) {
+            //        if (pkt1->pkt.pts >= drop_to_pts) {
+            break;
+        }
+        q->first_pkt = pkt1->next;
+        if (!q->first_pkt)
+            q->last_pkt = NULL;
+        q->nb_packets--;
+        ++del_nb_packets;
+        q->size -= pkt1->pkt.size + sizeof(*pkt1);
+        if (pkt1->pkt.duration > 0)
+            q->duration -= pkt1->pkt.duration;
+        av_packet_unref(&pkt1->pkt);
+#ifdef FFP_MERGE
+        av_free(pkt1);
+#else
+        pkt1->next = q->recycle_pkt;
+        q->recycle_pkt = pkt1;
+#endif
+    }
+    av_log(NULL, AV_LOG_INFO, "233 del_nb_packets = %d.\n", del_nb_packets);
+}
+
+static void control_video_queue_duration(FFPlayer *ffp, VideoState *is) {
+    int time_base_valid = 0;
+    int64_t cached_duration = -1;
+    int nb_packets = 0;
+    int64_t duration = 0;
+    int64_t drop_to_pts = 0;
+    
+    //Lock
+    SDL_LockMutex(is->videoq.mutex);
+    
+    time_base_valid = is->video_st->time_base.den > 0 && is->video_st->time_base.num > 0;
+    nb_packets = is->videoq.nb_packets;
+    
+    // TOFIX: if time_base_valid false, calc duration with nb_packets and framerate
+    // 为什么不用 videoq.duration？因为遇到过videoq.duration 一直为0，audioq也一样
+    if (time_base_valid) {
+        if (is->videoq.first_pkt && is->videoq.last_pkt) {
+            duration = is->videoq.last_pkt->pkt.pts - is->videoq.first_pkt->pkt.pts;
+            cached_duration = duration * av_q2d(is->video_st->time_base) * 1000;
+        }
+    }
+    
+    if (cached_duration > is->max_cached_duration) {
+        // drop
+        av_log(NULL, AV_LOG_INFO, "233 video cached_duration = %lld, nb_packets = %d.\n", cached_duration, nb_packets);
+        drop_to_pts = is->videoq.last_pkt->pkt.pts - (duration / 2);  // 这里删掉一半，你也可以自己修改，依据设置进来的max_cached_duration大小
+        drop_queue_until_pts(&is->videoq, drop_to_pts);
+    }
+    
+    //Unlock
+    SDL_UnlockMutex(is->videoq.mutex);
+}
+
+static void control_audio_queue_duration(FFPlayer *ffp, VideoState *is) {
+    int time_base_valid = 0;
+    int64_t cached_duration = -1;
+    int nb_packets = 0;
+    int64_t duration = 0;
+    int64_t drop_to_pts = 0;
+    
+    //Lock
+    SDL_LockMutex(is->audioq.mutex);
+    
+    time_base_valid = is->audio_st->time_base.den > 0 && is->audio_st->time_base.num > 0;
+    nb_packets = is->audioq.nb_packets;
+    
+    // TOFIX: if time_base_valid false, calc duration with nb_packets and samplerate
+    if (time_base_valid) {
+        if (is->audioq.first_pkt && is->audioq.last_pkt) {
+            duration = is->audioq.last_pkt->pkt.pts - is->audioq.first_pkt->pkt.pts;
+            cached_duration = duration * av_q2d(is->audio_st->time_base) * 1000;
+        }
+    }
+    
+    if (cached_duration > is->max_cached_duration) {
+        // drop
+        av_log(NULL, AV_LOG_INFO, "233 audio cached_duration = %lld, nb_packets = %d.\n", cached_duration, nb_packets);
+        drop_to_pts = is->audioq.last_pkt->pkt.pts - (duration / 2);
+        drop_queue_until_pts(&is->audioq, drop_to_pts);
+    }
+    
+    //Unlock
+    SDL_UnlockMutex(is->audioq.mutex);
+}
+
+static void control_queue_duration(FFPlayer *ffp, VideoState *is) {
+    if (is->max_cached_duration <= 0) {
+        return;
+    }
+    
+    if (is->audio_st) {
+        return control_audio_queue_duration(ffp, is);
+    }
+    if (is->video_st) {
+        return control_video_queue_duration(ffp, is);
+    }
+    
 }
 #endif
 
@@ -336,25 +449,31 @@ static int packet_queue_get_or_buffering(FFPlayer *ffp, PacketQueue *q, AVPacket
         return packet_queue_get(q, pkt, 1, serial);
 
     while (1) {
-        int new_packet = packet_queue_get(q, pkt, 0, serial);
+        
+        int new_packet = packet_queue_get(q, pkt, 1, serial);
+        
         if (new_packet < 0)
-            return -1;
+        {
+            new_packet = packet_queue_get(q, pkt, 0, serial);
+            if(new_packet < 0)
+                return -1;
+        }
         else if (new_packet == 0) {
-            if (q->is_buffer_indicator && !*finished)
-                ffp_toggle_buffering(ffp, 1);
+//            if (!finished)
+////                ffp_toggle_buffering(ffp, 1);
+            
             new_packet = packet_queue_get(q, pkt, 1, serial);
             if (new_packet < 0)
                 return -1;
         }
-
         if (*finished == *serial) {
+            
             av_packet_unref(pkt);
             continue;
         }
         else
             break;
     }
-
     return 1;
 }
 
@@ -710,6 +829,25 @@ static void video_image_display2(FFPlayer *ffp)
         if (!ffp->first_video_frame_rendered) {
             ffp->first_video_frame_rendered = 1;
             ffp_notify_msg1(ffp, FFP_MSG_VIDEO_RENDERING_START);
+            
+            
+#ifdef YYXAF_ADD_1
+            //gongjia add  这里可以判断是否是点播还是直播，如果你们平台只有直播，可以忽略
+            if(ffp->blive == -1){
+                int duration_l = ffp_get_duration_l(ffp);
+                if(duration_l == 0) {
+                    ffp->blive = 1;
+                    av_log(NULL, AV_LOG_INFO, "[gdebug %s: %d] blive = %d, %s\n", __FUNCTION__, __LINE__, ffp->blive, ffp->blive?"live":"vod");
+                }else if(duration_l > 0) {
+                    ffp->blive = 0;
+                    av_log(NULL, AV_LOG_INFO, "[gdebug %s: %d] blive = %d, %s\n", __FUNCTION__, __LINE__, ffp->blive, ffp->blive?"live":"vod");
+                }else{
+                    ffp->blive = -1;
+                    av_log(NULL, AV_LOG_ERROR, "[gdebug %s: %d]\n", __FUNCTION__, __LINE__);
+                }
+                
+            }
+#endif
         }
     }
 }
@@ -819,12 +957,6 @@ static void stream_close(FFPlayer *ffp)
 #endif
 #ifdef FFP_MERGE
     sws_freeContext(is->sub_convert_ctx);
-#endif
-
-#if defined(__ANDROID__)
-    if (ffp->soundtouch_enable && is->handle != NULL) {
-        ijk_soundtouch_destroy(is->handle);
-    }
 #endif
     av_free(is->filename);
     av_free(is);
@@ -1077,9 +1209,21 @@ static void video_refresh(FFPlayer *opaque, double *remaining_time)
     double time;
 
     Frame *sp, *sp2;
-
+    if (get_master_sync_type(is) == AV_SYNC_EXTERNAL_CLOCK) {
+        is->realtime = 1;
+    }
     if (!is->paused && get_master_sync_type(is) == AV_SYNC_EXTERNAL_CLOCK && is->realtime)
         check_external_clock_speed(is);
+    
+//    if (!is->paused && get_master_sync_type(is) == AV_SYNC_EXTERNAL_CLOCK && !is->realtime) {
+//        #ifdef YYXAF_ADD_1
+//                    if(!is->paused && ffp->blive && ffp->first_video_frame_rendered == 1){
+//                        if (is->max_cached_duration > 0 && is->videoq.nb_packets >= 40) {
+//                            control_queue_duration(ffp, is);
+//                        }
+//                    }
+//        #endif
+//    }
 
     if (!ffp->display_disable && is->show_mode != SHOW_MODE_VIDEO && is->audio_st) {
         time = av_gettime_relative() / 1000000.0;
@@ -1179,8 +1323,11 @@ retry:
         }
 display:
         /* display picture */
+//        printf("ffp->display_disable:%d----is->force_refresh:%d----is->show_mode:%d----is->pictq.rindex_shown%d\n",ffp->display_disable,is->force_refresh,is->show_mode,is->pictq.rindex_shown);
+        
         if (!ffp->display_disable && is->force_refresh && is->show_mode == SHOW_MODE_VIDEO && is->pictq.rindex_shown)
             video_display2(ffp);
+        
     }
     is->force_refresh = 0;
     if (ffp->show_status) {
@@ -2095,7 +2242,6 @@ static int audio_decode_frame(FFPlayer *ffp)
     av_unused double audio_clock0;
     int wanted_nb_samples;
     Frame *af;
-    int translate_time = 1;
 
     if (is->paused || is->step)
         return -1;
@@ -2114,7 +2260,7 @@ static int audio_decode_frame(FFPlayer *ffp)
             return -1;
         }
     }
-reload:
+
     do {
 #if defined(_WIN32) || defined(__APPLE__)
         while (frame_queue_nb_remaining(&is->sampq) == 0) {
@@ -2192,7 +2338,6 @@ reload:
             }
         }
         av_fast_malloc(&is->audio_buf1, &is->audio_buf1_size, out_size);
-
         if (!is->audio_buf1)
             return AVERROR(ENOMEM);
         len2 = swr_convert(is->swr_ctx, out, out_count, in, af->frame->nb_samples);
@@ -2206,27 +2351,7 @@ reload:
                 swr_free(&is->swr_ctx);
         }
         is->audio_buf = is->audio_buf1;
-        int bytes_per_sample = av_get_bytes_per_sample(is->audio_tgt.fmt);
-        resampled_data_size = len2 * is->audio_tgt.channels * bytes_per_sample;
-#if defined(__ANDROID__)
-        if (ffp->soundtouch_enable && ffp->pf_playback_rate != 1.0f && !is->abort_request) {
-            av_fast_malloc(&is->audio_new_buf, &is->audio_new_buf_size, out_size * translate_time);
-            for (int i = 0; i < (resampled_data_size / 2); i++)
-            {
-                is->audio_new_buf[i] = (is->audio_buf1[i * 2] | (is->audio_buf1[i * 2 + 1] << 8));
-            }
-
-            int ret_len = ijk_soundtouch_translate(is->handle, is->audio_new_buf, (float)(ffp->pf_playback_rate), (float)(1.0f/ffp->pf_playback_rate),
-                    resampled_data_size / 2, bytes_per_sample, is->audio_tgt.channels, af->frame->sample_rate);
-            if (ret_len > 0) {
-                is->audio_buf = (uint8_t*)is->audio_new_buf;
-                resampled_data_size = ret_len;
-            } else {
-                translate_time++;
-                goto reload;
-            }
-        }
-#endif
+        resampled_data_size = len2 * is->audio_tgt.channels * av_get_bytes_per_sample(is->audio_tgt.fmt);
     } else {
         is->audio_buf = af->frame->data[0];
         resampled_data_size = data_size;
@@ -2275,13 +2400,7 @@ static void sdl_audio_callback(void *opaque, Uint8 *stream, int len)
 
     if (ffp->pf_playback_rate_changed) {
         ffp->pf_playback_rate_changed = 0;
-#if defined(__ANDROID__)
-        if (!ffp->soundtouch_enable) {
-            SDL_AoutSetPlaybackRate(ffp->aout, ffp->pf_playback_rate);
-        }
-#else
         SDL_AoutSetPlaybackRate(ffp->aout, ffp->pf_playback_rate);
-#endif
     }
     if (ffp->pf_playback_volume_changed) {
         ffp->pf_playback_volume_changed = 0;
@@ -2731,6 +2850,28 @@ static int read_thread(void *arg)
 
     opts = setup_find_stream_info_opts(ic, ffp->codec_opts);
     orig_nb_streams = ic->nb_streams;
+    
+    
+#ifdef YYXAF_ADD_1
+    // 可以在最前面定义下初始化, 也可以在初始化函数里定义
+    ffp->blive = -1;
+    
+    //可以交给应用层设置，嫌麻烦就忽略这段代码
+    AVDictionaryEntry *is_live = av_dict_get(ffp->player_opts, "islive", NULL, 0);
+    if (is_live) {
+        int islive = atoi(is_live->value);
+        av_log(NULL, AV_LOG_ERROR, "[gdebug %s, %d]. get from java, islive = %d\n",__FUNCTION__, __LINE__, islive);
+        
+        if (islive < 0) {
+            ffp->blive = -1;
+        } else {
+            ffp->blive = islive;
+        }
+    } else {
+        ffp->blive = -1;
+    }
+#endif
+    
 
     err = avformat_find_stream_info(ic, opts);
 
@@ -2776,6 +2917,21 @@ static int read_thread(void *arg)
     }
 
     is->realtime = is_realtime(ic);
+    
+#ifdef YYXAF_ADD_1
+    is->realtime = 0;
+    AVDictionaryEntry *e = av_dict_get(ffp->player_opts, "max_cached_duration", NULL, 0);
+    if (e) {
+        int max_cached_duration = atoi(e->value);
+        if (max_cached_duration <= 0) {
+            is->max_cached_duration = 0;
+        } else {
+            is->max_cached_duration = max_cached_duration;
+        }
+    } else {
+        is->max_cached_duration = 0;
+    }
+#endif
 
     if (true || ffp->show_status)
         av_dump_format(ic, 0, is->filename, 0);
@@ -3024,9 +3180,9 @@ static int read_thread(void *arg)
                 ffp_toggle_buffering(ffp, 0);
             }
             /* wait 10 ms */
-            SDL_LockMutex(wait_mutex);
-            SDL_CondWaitTimeout(is->continue_read_thread, wait_mutex, 10);
-            SDL_UnlockMutex(wait_mutex);
+//            SDL_LockMutex(wait_mutex);
+//            SDL_CondWaitTimeout(is->continue_read_thread, wait_mutex, 10);
+//            SDL_UnlockMutex(wait_mutex);
             continue;
         }
         if ((!is->paused || completed) &&
@@ -3145,9 +3301,25 @@ static int read_thread(void *arg)
                 (double)(ffp->start_time != AV_NOPTS_VALUE ? ffp->start_time : 0) / 1000000
                 <= ((double)ffp->duration / 1000000);
         if (pkt->stream_index == is->audio_stream && pkt_in_play_range) {
+#ifdef YYXAF_ADD_1
+            if(!is->paused && ffp->blive && ffp->first_video_frame_rendered == 1){
+                if (is->max_cached_duration > 0 && (pkt->flags & AV_PKT_FLAG_KEY)) {
+                    control_queue_duration(ffp, is);
+                }
+            }
+#endif
             packet_queue_put(&is->audioq, pkt);
         } else if (pkt->stream_index == is->video_stream && pkt_in_play_range
                    && !(is->video_st && (is->video_st->disposition & AV_DISPOSITION_ATTACHED_PIC))) {
+            
+//#ifdef YYXAF_ADD_1
+//            if(!is->paused && ffp->blive && ffp->first_video_frame_rendered == 1){
+//                if (is->max_cached_duration > 0 && (pkt->flags & AV_PKT_FLAG_KEY)) {
+//                    control_queue_duration(ffp, is);
+//                }
+//            }
+//#endif
+            
             packet_queue_put(&is->videoq, pkt);
         } else if (pkt->stream_index == is->subtitle_stream && pkt_in_play_range) {
             packet_queue_put(&is->subtitleq, pkt);
@@ -3194,11 +3366,7 @@ static VideoState *stream_open(FFPlayer *ffp, const char *filename, AVInputForma
     is->iformat = iformat;
     is->ytop    = 0;
     is->xleft   = 0;
-#if defined(__ANDROID__)
-    if (ffp->soundtouch_enable) {
-        is->handle = ijk_soundtouch_create();
-    }
-#endif
+
     /* start video display */
     if (frame_queue_init(&is->pictq, &is->videoq, ffp->pictq_size, 1) < 0)
         goto fail;

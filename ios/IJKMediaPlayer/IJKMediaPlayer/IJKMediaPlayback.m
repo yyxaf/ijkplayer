@@ -40,12 +40,9 @@ NSString *const IJKMPMoviePlayerVideoDecoderOpenNotification = @"IJKMPMoviePlaye
 NSString *const IJKMPMoviePlayerFirstVideoFrameRenderedNotification = @"IJKMPMoviePlayerFirstVideoFrameRenderedNotification";
 NSString *const IJKMPMoviePlayerFirstAudioFrameRenderedNotification = @"IJKMPMoviePlayerFirstAudioFrameRenderedNotification";
 
-NSString *const IJKMPMoviePlayerAccurateSeekCompleteNotification = @"IJKMPMoviePlayerAccurateSeekCompleteNotification";
-
 NSString *const IJKMPMoviePlayerDidSeekCompleteNotification = @"IJKMPMoviePlayerDidSeekCompleteNotification";
 NSString *const IJKMPMoviePlayerDidSeekCompleteTargetKey = @"IJKMPMoviePlayerDidSeekCompleteTargetKey";
 NSString *const IJKMPMoviePlayerDidSeekCompleteErrorKey = @"IJKMPMoviePlayerDidSeekCompleteErrorKey";
-NSString *const IJKMPMoviePlayerDidAccurateSeekCompleteCurPos = @"IJKMPMoviePlayerDidAccurateSeekCompleteCurPos";
 
 @implementation IJKMediaUrlOpenData {
     NSString *_url;

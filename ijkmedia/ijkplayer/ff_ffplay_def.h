@@ -68,6 +68,8 @@
 
 #define DEFAULT_HIGH_WATER_MARK_IN_BYTES        (256 * 1024)
 
+
+#define YYXAF_ADD_1
 /*
  * START: buffering after prepared/seeked
  * NEXT:  buffering for the second time after START
@@ -89,7 +91,7 @@
 #define MAX_MIN_FRAMES      50000
 #define MIN_FRAMES (ffp->dcc.min_frames)
 #define EXTERNAL_CLOCK_MIN_FRAMES 2
-#define EXTERNAL_CLOCK_MAX_FRAMES 10
+#define EXTERNAL_CLOCK_MAX_FRAMES 3
 
 /* Minimum SDL audio buffer size, in samples. */
 #define SDL_AUDIO_MIN_BUFFER_SIZE 512
@@ -112,9 +114,9 @@
 #define SAMPLE_CORRECTION_PERCENT_MAX 10
 
 /* external clock speed adjustment constants for realtime sources based on buffer fullness */
-#define EXTERNAL_CLOCK_SPEED_MIN  0.900
-#define EXTERNAL_CLOCK_SPEED_MAX  1.010
-#define EXTERNAL_CLOCK_SPEED_STEP 0.001
+#define EXTERNAL_CLOCK_SPEED_MIN  0.950
+#define EXTERNAL_CLOCK_SPEED_MAX  1.20
+#define EXTERNAL_CLOCK_SPEED_STEP 0.002
 
 /* we use about AUDIO_DIFF_AVG_NB A-V differences to make the average */
 #define AUDIO_DIFF_AVG_NB   20
@@ -287,7 +289,7 @@ typedef struct VideoState {
     int audio_stream;
 
     int av_sync_type;
-    void *handle;
+
     double audio_clock;
     int audio_clock_serial;
     double audio_diff_cum; /* used for AV difference average computation */
@@ -299,10 +301,8 @@ typedef struct VideoState {
     int audio_hw_buf_size;
     uint8_t *audio_buf;
     uint8_t *audio_buf1;
-    short *audio_new_buf;  /* for soundtouch buf */
     unsigned int audio_buf_size; /* in bytes */
     unsigned int audio_buf1_size;
-    unsigned int audio_new_buf_size;
     int audio_buf_index; /* in bytes */
     int audio_write_buf_size;
     int audio_volume;
@@ -393,6 +393,10 @@ typedef struct VideoState {
     SDL_mutex *accurate_seek_mutex;
     SDL_cond  *video_accurate_seek_cond;
     SDL_cond  *audio_accurate_seek_cond;
+    
+#ifdef YYXAF_ADD_1
+    int max_cached_duration;
+#endif
 } VideoState;
 
 /* options specified by the user */
@@ -648,7 +652,6 @@ typedef struct FFPlayer {
     int mediacodec_auto_rotate;
 
     int opensles;
-    int soundtouch_enable;
 
     char *iformat_name;
 
@@ -679,6 +682,11 @@ typedef struct FFPlayer {
     IjkIOManagerContext *ijkio_manager_ctx;
 
     int enable_accurate_seek;
+    
+    
+#ifdef YYXAF_ADD_1
+    int blive;
+#endif
 } FFPlayer;
 
 #define fftime_to_milliseconds(ts) (av_rescale(ts, 1000, AV_TIME_BASE))
@@ -777,7 +785,6 @@ inline static void ffp_reset_internal(FFPlayer *ffp)
     ffp->mediacodec_auto_rotate         = 0; // option
 
     ffp->opensles                       = 0; // option
-    ffp->soundtouch_enable              = 0; // option
 
     ffp->iformat_name                   = NULL; // option
 

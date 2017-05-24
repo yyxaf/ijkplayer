@@ -28,7 +28,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
 
 static int ijkio_manager_alloc(IjkIOManagerContext **ph, void *opaque)
 {
@@ -45,7 +44,6 @@ static int ijkio_manager_alloc(IjkIOManagerContext **ph, void *opaque)
 
     h->ijkio_app_ctx->threadpool_ctx = ijk_threadpool_create(5, 5, 0);
     h->ijkio_app_ctx->cache_info_map = ijk_map_create();
-    h->ijkio_app_ctx->fd             = -1;
     *ph = h;
     return 0;
 }
@@ -82,9 +80,6 @@ void ijkio_manager_destroy(IjkIOManagerContext *h)
         }
 
         if (0 != strlen(h->ijkio_app_ctx->cache_file_path)) {
-            if (h->ijkio_app_ctx->fd >= 0) {
-                close(h->ijkio_app_ctx->fd);
-            }
             remove(h->ijkio_app_ctx->cache_file_path);
         }
 

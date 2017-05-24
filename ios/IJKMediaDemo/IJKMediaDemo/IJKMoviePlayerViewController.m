@@ -57,10 +57,29 @@
     return self;
 }
 
+//- (void)WillResignActive {
+//    [self.player shutdown];
+//}
+
+//- (void)didBecomeActive {
+//    [self.player prepareToPlay];
+//    [self.player play];
+//}
+
 #define EXPECTED_IJKPLAYER_VERSION (1 << 16) & 0xFF) | 
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+    
+//    [[NSNotificationCenter defaultCenter] addObserver:self
+//                                             selector:@selector(WillResignActive)
+//                                                 name:UIApplicationWillResignActiveNotification object:nil];
+//    
+//    [[NSNotificationCenter defaultCenter] addObserver:self
+//                                             selector:@selector(didBecomeActive)
+//                                                 name:UIApplicationDidBecomeActiveNotification object:nil];
+    
+    
     // Do any additional setup after loading the view from its nib.
 
 //    [[UIApplication sharedApplication] setStatusBarHidden:YES];
@@ -77,7 +96,7 @@
     [IJKFFMoviePlayerController checkIfFFmpegVersionMatch:YES];
     // [IJKFFMoviePlayerController checkIfPlayerVersionMatch:YES major:1 minor:0 micro:0];
 
-    BOOL _isLive = false;
+    BOOL _isLive = true;
     
     IJKFFOptions *options = [IJKFFOptions optionsByDefault];
     [options setFormatOptionValue:@"tcp" forKey:@"rtsp_transport"];
@@ -85,11 +104,12 @@
     [options setFormatOptionIntValue:1024 * 2 forKey:@"probsize"];
     [options setFormatOptionIntValue:2000 forKey:@"analyzeduration"];
     [options setPlayerOptionIntValue:1 forKey:@"videotoolbox"];
+    [options setPlayerOptionIntValue:1 forKey:@"islive"];
     [options setCodecOptionIntValue:IJK_AVDISCARD_DEFAULT forKey:@"skip_loop_filter"];
     [options setCodecOptionIntValue:IJK_AVDISCARD_DEFAULT forKey:@"skip_frame"];
     if (_isLive) {
         // Param for living
-        [options setPlayerOptionIntValue:1000 forKey:@"max_cached_duration"];   // 最大缓存大小是3秒，可以依据自己的需求修改
+        [options setPlayerOptionIntValue:600 forKey:@"max_cached_duration"];   // 最大缓存大小是3秒，可以依据自己的需求修改
         [options setPlayerOptionIntValue:1 forKey:@"infbuf"];  // 无限读
         [options setPlayerOptionIntValue:0 forKey:@"packet-buffering"];  //  关闭播放器缓冲
     } else {
@@ -130,6 +150,7 @@
     [self installMovieNotificationObservers];
 
     [self.player prepareToPlay];
+    [self.player play];
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
@@ -282,6 +303,7 @@
     {
         case IJKMPMoviePlaybackStateStopped: {
             NSLog(@"IJKMPMoviePlayBackStateDidChange %d: stoped", (int)_player.playbackState);
+
             break;
         }
         case IJKMPMoviePlaybackStatePlaying: {

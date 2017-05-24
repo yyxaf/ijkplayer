@@ -29,12 +29,12 @@
 #include "ijkplayer/ijkavutil/opt.h"
 #include "ijkplayer/ijkavutil/ijkutils.h"
 
-#include "j4a/class/tv/danmaku/ijk/media/player/misc/IAndroidIO.h"
+#include "j4a/class/tv/danmaku/ijk/media/player/misc/IIjkIOHttp.h"
 #include "ijksdl/android/ijksdl_android_jni.h"
 #include <assert.h>
 
 typedef struct IjkIOAndroidioContext {
-    jobject         ijkio_androidio;
+    jobject         ijkio_http;
     jbyteArray      jbuffer;
     int             jbuffer_capacity;
     URLContext *inner;
@@ -43,43 +43,33 @@ typedef struct IjkIOAndroidioContext {
 static int ijkio_androidio_open(IjkURLContext *h, const char *url, int flags, IjkAVDictionary **options) {
     IjkIOAndroidioContext *c= h->priv_data;
     JNIEnv *env = NULL;
-    jobject ijkio_androidio = NULL;
+    jobject ijkio_http = NULL;
     char *final = NULL;
 
     if (!c)
         return -1;
 
-    av_strstart(url, "androidio:", &url);
+    av_strstart(url, "androidio:http:", &url);
 
-    IjkAVDictionaryEntry *t = NULL;
-    t = ijk_av_dict_get(*options, "androidio-inject-callback", NULL, IJK_AV_DICT_IGNORE_SUFFIX);
-    if (t) {
-        ijkio_androidio = (jobject) (intptr_t) strtoll(t->value, &final, 10);
-    } else {
-        return -1;
-    }
+    ijkio_http = (jobject) (intptr_t) strtoll(url, &final, 10);
+    if (!ijkio_http)
+        return AVERROR(EINVAL);
 
     if (JNI_OK != SDL_JNI_SetupThreadEnv(&env)) {
         av_log(h, AV_LOG_ERROR, "%s: SDL_JNI_SetupThreadEnv: failed", __func__);
         return AVERROR(EINVAL);
     }
 
-    if (!ijkio_androidio)
-        return AVERROR(EINVAL);
-
-    c->ijkio_androidio = (*env)->NewGlobalRef(env, ijkio_androidio);
-    if (J4A_ExceptionCheck__catchAll(env) || !c->ijkio_androidio) {
-        return AVERROR(ENOMEM);
-    }
-
-    jstring urlString = NULL;
-    urlString = (*env)->NewStringUTF(env, url);
-
-    jint ret = J4AC_IAndroidIO__open(env, c->ijkio_androidio, urlString);
+    jint ret = J4AC_IIjkIOHttp__open(env, ijkio_http);
     if (J4A_ExceptionCheck__catchAll(env)) {
         return AVERROR(EINVAL);
     } else if (ret < 0) {
         return ret;
+    }
+
+    c->ijkio_http = (*env)->NewGlobalRef(env, ijkio_http);
+    if (J4A_ExceptionCheck__catchAll(env) || !c->ijkio_http) {
+        return AVERROR(ENOMEM);
     }
 
     return 0;
@@ -114,7 +104,7 @@ static int ijkio_androidio_read(IjkURLContext *h, unsigned char *buf, int size) 
     jbyteArray  jbuffer = NULL;
     jint        ret = 0;
 
-    if (!c || !c->ijkio_androidio)
+    if (!c || !c->ijkio_http)
         return AVERROR(EINVAL);
 
     if (JNI_OK != SDL_JNI_SetupThreadEnv(&env)) {
@@ -126,7 +116,7 @@ static int ijkio_androidio_read(IjkURLContext *h, unsigned char *buf, int size) 
     if (!jbuffer)
         return AVERROR(ENOMEM);
 
-    ret = J4AC_IAndroidIO__read(env, c->ijkio_androidio, jbuffer, size);
+    ret = J4AC_IIjkIOHttp__read(env, c->ijkio_http, jbuffer, size);
     if (J4A_ExceptionCheck__catchAll(env))
         return AVERROR(EIO);
     else if (ret < 0)
@@ -146,7 +136,7 @@ static int64_t ijkio_androidio_seek(IjkURLContext *h, int64_t offset, int whence
     int64_t  ret;
     JNIEnv  *env = NULL;
 
-    if (!c || !c->ijkio_androidio)
+    if (!c || !c->ijkio_http)
         return AVERROR(EINVAL);
 
     if (JNI_OK != SDL_JNI_SetupThreadEnv(&env)) {
@@ -154,7 +144,7 @@ static int64_t ijkio_androidio_seek(IjkURLContext *h, int64_t offset, int whence
         return AVERROR(EINVAL);
     }
 
-    ret = J4AC_IAndroidIO__seek(env, c->ijkio_androidio, offset, whence);
+    ret = J4AC_IIjkIOHttp__seek(env, c->ijkio_http, offset, whence);
     if (J4A_ExceptionCheck__catchAll(env))
         return AVERROR(EIO);
 
@@ -165,19 +155,19 @@ static int ijkio_androidio_close(IjkURLContext *h) {
     IjkIOAndroidioContext *c = h->priv_data;
     JNIEnv *env = NULL;
 
+    if (!c || !c->ijkio_http)
+        return AVERROR(EINVAL);
+
     if (JNI_OK != SDL_JNI_SetupThreadEnv(&env)) {
         av_log(h, AV_LOG_ERROR, "%s: SDL_JNI_SetupThreadEnv: failed", __func__);
         return AVERROR(EINVAL);
     }
 
-    if (!c || !c->ijkio_androidio)
-        return AVERROR(EINVAL);
-
     J4A_DeleteGlobalRef__p(env, &c->jbuffer);
 
-    if (c->ijkio_androidio) {
-        J4AC_IAndroidIO__close__catchAll(env, c->ijkio_androidio);
-        J4A_DeleteGlobalRef__p(env, &c->ijkio_androidio);
+    if (c->ijkio_http) {
+        J4AC_IIjkIOHttp__close__catchAll(env, c->ijkio_http);
+        J4A_DeleteGlobalRef__p(env, &c->ijkio_http);
     }
 
     return 0;

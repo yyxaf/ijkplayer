@@ -65,13 +65,6 @@
         AudioStreamBasicDescription streamDescription;
         IJKSDLGetAudioStreamBasicDescriptionFromSpec(&_spec, &streamDescription);
 
-        SDL_CalculateAudioSpec(&_spec);
-
-        if (_spec.size == 0) {
-            NSLog(@"aout_open_audio: unexcepted audio spec size %u", _spec.size);
-            return nil;
-        }
-
         /* Set the desired format */
         AudioQueueRef audioQueueRef;
         OSStatus status = AudioQueueNewOutput(&streamDescription,
@@ -100,6 +93,8 @@
             self = nil;
             return nil;
         }
+
+        SDL_CalculateAudioSpec(&_spec);
 
         _audioQueueRef = audioQueueRef;
 

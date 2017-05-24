@@ -54,7 +54,7 @@ import java.util.Map;
 
 import tv.danmaku.ijk.media.player.annotations.AccessedByNative;
 import tv.danmaku.ijk.media.player.annotations.CalledByNative;
-import tv.danmaku.ijk.media.player.misc.IAndroidIO;
+import tv.danmaku.ijk.media.player.misc.IIjkIOHttp;
 import tv.danmaku.ijk.media.player.misc.IMediaDataSource;
 import tv.danmaku.ijk.media.player.misc.ITrackInfo;
 import tv.danmaku.ijk.media.player.misc.IjkTrackInfo;
@@ -144,7 +144,7 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
     private long mNativeMediaDataSource;
 
     @AccessedByNative
-    private long mNativeAndroidIO;
+    private long mNativeIjkIOHttp;
 
     @AccessedByNative
     private int mNativeSurfaceTexture;
@@ -185,7 +185,6 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
 
                 libLoader.loadLibrary("ijkffmpeg");
                 libLoader.loadLibrary("ijksdl");
-                libLoader.loadLibrary("ijksoundtouch");
                 libLoader.loadLibrary("ijkplayer");
                 mIsLibLoaded = true;
             }
@@ -482,9 +481,9 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
         _setDataSource(mediaDataSource);
     }
 
-    public void setAndroidIOCallback(IAndroidIO androidIO)
+    public void setDataSourceIjkIOHttp(IIjkIOHttp ijkIOHttp)
             throws IllegalArgumentException, SecurityException, IllegalStateException {
-        _setAndroidIOCallback(androidIO);
+        _setDataSourceIjkIOHttp(ijkIOHttp);
     }
 
     private native void _setDataSource(String path, String[] keys, String[] values)
@@ -496,7 +495,7 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
     private native void _setDataSource(IMediaDataSource mediaDataSource)
             throws IllegalArgumentException, SecurityException, IllegalStateException;
 
-    private native void _setAndroidIOCallback(IAndroidIO androidIO)
+    private native void _setDataSourceIjkIOHttp(IIjkIOHttp ijkIOHttp)
             throws IllegalArgumentException, SecurityException, IllegalStateException;
 
     @Override
